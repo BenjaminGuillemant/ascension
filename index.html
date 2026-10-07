@@ -126,6 +126,10 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline
 .ex-btns button.minus{flex:0 0 48px;color:var(--muted)}
 .ex-btns button.chrono{flex:2}
 .ex-btns button.chrono.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.ex-btns button:disabled{opacity:.35;cursor:default}
+.ex-max{margin:6px 0 0;font-size:12px;color:var(--muted)}
+.win.locked .ex{opacity:.55}
+.lock-note{margin:4px 0 6px;padding:10px 12px;border:1px solid var(--danger);color:var(--danger);font-size:14px;display:flex;gap:8px;align-items:center}
 .danger .ex-btns button{background:var(--danger-soft);border-color:var(--danger)}
 .danger .bar i{background:var(--danger)}
 .reward{font-size:14px;color:var(--muted);margin:12px 0 0}
@@ -428,7 +432,7 @@ var CLASSES = {
   VIT:{n:"Rôdeur",d:"Des jambes infatigables. Squats, fentes et course à l'honneur."}
 };
 var TRIAL = {id:"trial",r:1,n:"Épreuve de classe",rounds:8,work:40,rest:20,moves:["Pompes","Burpees","Gainage","Squats sautés"],xp:200};
-var APP_VERSION = "6";
+var APP_VERSION = "7";
 var RAR = [{n:"Commun",c:"#9AA8C7",v:2,sell:10},{n:"Rare",c:"#4DA3FF",v:4,sell:30},{n:"Épique",c:"#B07CFF",v:7,sell:80},{n:"Légendaire",c:"#FFC53D",v:12,sell:200}];
 var SLOTS = {tete:{n:"Tête",b:["Bandeau","Casque","Capuche"]},mains:{n:"Mains",b:["Gants","Bandes","Brassards"]},pieds:{n:"Pieds",b:["Bottes","Chaussures","Jambières"]},cou:{n:"Cou",b:["Amulette","Anneau","Pendentif"]}};
 var BON = {FOR:{s:"du titan",d:"d'XP de Force"},AGI:{s:"du vent",d:"d'XP d'Agilité"},END:{s:"de pierre",d:"d'XP d'Endurance"},VIT:{s:"de la source",d:"d'XP de Vitalité"},dg:{s:"du chasseur",d:"d'XP en donjon"},gold:{s:"du marchand",d:"d'or gagné"},dmg:{s:"du bourreau",d:"de dégâts aux boss"}};
@@ -555,6 +559,7 @@ function migrate(){if(!S)return;if(S.tokens==null)S.tokens=0;if(S.bossWins==null
   if(!S.restDays)S.restDays=[];if(S.unstableDone==null)S.unstableDone=0;if(S.bought==null)S.bought=0;
   if(!S.inv)S.inv=[];if(!S.eq)S.eq={};if(S.skills==null)S.skills=0;if(!S.exams)S.exams=[];if(S.calib===undefined)S.calib=null;
   if(!S.stitles)S.stitles=[];if(S.lifeDays==null)S.lifeDays=0;if(!S.remTime)S.remTime="18:00";if(S.wqAll==null)S.wqAll=0;
+  if(S.boss&&S.boss.over==null)S.boss.over=0;if(S.season&&!S.season.rc)S.season.rc={};if(S.wq&&!S.wq.rc)S.wq.rc={};
 }
 function dayAmounts(d){
   var o={};if(!d)return o;
@@ -645,6 +650,7 @@ function ensureToday(){
       d.pen={t:{jj:roundU(50*m,"reps"),gainage:roundU(Math.min(90*m,300),"s")},p:{},done:false};
     }
   }
+  for(var ok in S.days)if(ok!==k)stripRc(S.days[ok]);
   S.days[k]=d;save();
 }
 function ensureWeek(){
@@ -675,7 +681,7 @@ function ensureSeason(){
   var m=monthKey();
   if(S.season&&S.season.m===m)return;
   var first=!S.season;
-  S.season={m:m,xp:0,pal:0,boss:false};
+  S.season={m:m,xp:0,pal:0,boss:false,rc:{}};
   if(!first)note("Nouvelle saison",seasonName(m)+" commence. 30 paliers à gravir, un gardien à vaincre et des récompenses exclusives.","gold",seasonName(m).replace("Saison ",""));
   if(skillE("monthTok")&&S.lastMonthTok!==m){S.lastMonthTok=m;addToken();note("Seconde peau","Nouveau mois : ton talent de Gardien t'offre un jeton de repos.","gold")}
 }
@@ -683,11 +689,12 @@ function palReward(p){
   if(p===5||p===15)chest(1,"Coffre de palier "+p);
   else if(p===10){addToken();note("Palier 10","Récompense de saison : un jeton de repos.","gold")}
   else if(p===20){chest(2,"Coffre de palier 20");note("Palier 20","Le gardien de la saison t'attend dans l'onglet Donjons.","gold")}
-  else if(p===25){S.points++;note("Palier 25","Récompense de saison : 1 point de caractéristique.","gold")}
+  else if(p===25){addPts(1);note("Palier 25","Récompense de saison : 1 point de caractéristique.","gold")}
   else if(p===30){
     var sk=seasonSkin(S.season.m),yr=S.season.m.slice(0,4),tt="Champion de la "+seasonName(S.season.m)+" "+yr;
-    if(S.skins.indexOf(sk)===-1)S.skins.push(sk);
-    if(S.stitles.indexOf(tt)===-1)S.stitles.push(tt);
+    var rt=rcTop();
+    if(S.skins.indexOf(sk)===-1){S.skins.push(sk);if(rt)rt.skins.push(sk)}
+    if(S.stitles.indexOf(tt)===-1){S.stitles.push(tt);if(rt)rt.titles.push(tt)}
     chest(3,"Coffre de fin de saison");
     note("Saison accomplie","Titre exclusif « "+tt+" » et thème de couleur "+SKINS[sk].n+" débloqués. Équipe le dans la boutique.","gold",30);
   }
@@ -697,7 +704,13 @@ function seasonGain(n){
   if(!S.season)return;
   S.season.xp+=n;
   var np=Math.min(30,Math.floor(S.season.xp/PAL_XP));
-  while(S.season.pal<np){S.season.pal++;palReward(S.season.pal)}
+  while(S.season.pal<np){S.season.pal++;rcOpen();palReward(S.season.pal);if(!S.season.rc)S.season.rc={};S.season.rc[S.season.pal]=rcClose()}
+}
+function seasonLose(n){
+  if(!S.season)return;
+  S.season.xp=Math.max(0,S.season.xp-n);
+  var np=Math.min(30,Math.floor(S.season.xp/PAL_XP));
+  while(S.season.pal>np){var R=S.season.rc&&S.season.rc[S.season.pal];if(R){delete S.season.rc[S.season.pal];undoRc(R)}S.season.pal--}
 }
 function seasonBoss(){
   if(!S.season||S.season.pal<20)return null;
@@ -713,15 +726,27 @@ function ensureWQ(){
     t[q.id]=v>=100?Math.round(v/50)*50:Math.round(v)}
   var left=7-((new Date().getDay()+6)%7);
   if(left<7)ids.forEach(function(id){if(id!=="quests")t[id]=Math.max(1,Math.round(t[id]*left/7/(t[id]>=100?50:1))*(t[id]>=100?50:1));else t[id]=Math.min(t[id],left)});
-  S.wq={w:w,ids:ids,t:t,c:{},done:{},chest:false};
+  S.wq={w:w,ids:ids,t:t,c:{},done:{},chest:false,rc:{}};
 }
-function track(m,n){
+function track(m,n,raw){
   if(!S.wq||!n)return;
-  S.wq.c[m]=Math.max(0,(S.wq.c[m]||0)+n);
-  S.wq.ids.forEach(function(id){
-    if(!S.wq.done[id]&&(S.wq.c[id]||0)>=S.wq.t[id]){S.wq.done[id]=true;note("Quête de la semaine",wqLabel(id)+" : objectif atteint. +60 or.","gold");addGold(60)}
+  var rt=rcTop();if(rt&&!raw)rt.trk[m]=(rt.trk[m]||0)+n;
+  var wq=S.wq;if(!wq.rc)wq.rc={};
+  wq.c[m]=Math.max(0,(wq.c[m]||0)+n);
+  if(n<0){
+    wq.ids.forEach(function(id){
+      if(wq.done[id]&&(wq.c[id]||0)<wq.t[id]){
+        if(wq.chest){wq.chest=false;var RC0=wq.rcC;wq.rcC=null;undoRc(RC0)}
+        wq.done[id]=false;var R=wq.rc[id];delete wq.rc[id];undoRc(R);
+        note("Quête de la semaine",wqLabel(id)+" : l'objectif n'est plus atteint après ta correction. Les 60 or sont repris.","red");
+      }
+    });
+    return;
+  }
+  wq.ids.forEach(function(id){
+    if(!wq.done[id]&&(wq.c[id]||0)>=wq.t[id]){wq.done[id]=true;rcOpen();note("Quête de la semaine",wqLabel(id)+" : objectif atteint. +60 or.","gold");addGold(60,true);wq.rc[id]=rcClose()}
   });
-  if(!S.wq.chest&&S.wq.ids.every(function(id){return S.wq.done[id]})){S.wq.chest=true;S.wqAll++;chest(1,"Coffre de la semaine")}
+  if(!wq.chest&&wq.ids.every(function(id){return wq.done[id]})){wq.chest=true;rcOpen();rcCnt("wqAll",1);chest(1,"Coffre de la semaine");wq.rcC=rcClose()}
 }
 function wqLabel(id){var q=WQ_POOL.filter(function(x){return x.id===id})[0];return q.n.replace("{t}",S.wq.t[id].toLocaleString("fr-FR"))}
 function chest(minR,src){
@@ -733,12 +758,12 @@ function chest(minR,src){
   var slots=Object.keys(SLOTS),sl=slots[Math.floor(Math.random()*slots.length)],bk=Object.keys(BON),t=bk[Math.floor(Math.random()*bk.length)];
   var base=SLOTS[sl].b[Math.floor(Math.random()*SLOTS[sl].b.length)];
   var it={id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),sl:sl,n:base+" "+BON[t].s,r:r,t:t};
-  if(r===3){S.hadLeg=true;say("Objet légendaire !",true)}
+  if(r===3){if(!S.hadLeg&&rcTop())rcTop().leg=true;S.hadLeg=true;say("Objet légendaire !",true)}
   if(S.inv.length>=30){var gd=addGold(RAR[r].sell);note(src,"Inventaire plein : "+it.n+" ("+RAR[r].n.toLowerCase()+") a été vendu pour "+gd+" or.","r"+r);return}
-  S.inv.push(it);
+  S.inv.push(it);if(rcTop())rcTop().items.push(it.id);
   note(src,it.n+" ("+RAR[r].n.toLowerCase()+") : +"+RAR[r].v+" % "+BON[t].d+". Équipe le depuis ton inventaire.","r"+r,r>=2?RAR[r].n:null);
 }
-function addGold(n){n=Math.round(n*(1+compBonus("gold")/100));S.gold+=n;S.goldTotal+=n;track("gold",n);return n}
+function addGold(n,noTrack){n=Math.round(n*(1+compBonus("gold")/100));S.gold+=n;S.goldTotal+=n;var rt=rcTop();if(rt)rt.gold+=n;if(!noTrack)track("gold",n);return n}
 function isPlannedRest(k){return S.restDays.indexOf(wdOf(k))>-1}
 function rift(){
   var k=today(),r=rng(hash(k+"rift"+S.name));
@@ -748,24 +773,38 @@ function rift(){
   return {id:"rift",r:ri,n:RIFTS[Math.floor(r()*RIFTS.length)],rounds:b.rounds+2,work:b.work,rest:Math.max(10,b.rest-5),moves:b.moves,xp:b.xp*2,start:st,end:en,rift:true};
 }
 function riftState(){var g=rift();if(!g)return "none";var n=new Date();if(dayObj().dg.indexOf("rift")>-1)return "done";return n<g.start?"soon":n<g.end?"open":"closed"}
-function addToken(){S.tokens=Math.min(tokMax(),S.tokens+1)}
+function addToken(){var b=S.tokens;S.tokens=Math.min(tokMax(),S.tokens+1);var rt=rcTop();if(rt)rt.tok+=S.tokens-b}
 function dmgOf(ex,delta){var e=EX[ex],u=e.u;return e.rec?delta*2:u==="s"?delta/4:u==="min"?delta*8:delta}
-function hitBoss(n){
-  var b=S.boss;if(!b||b.won||!n)return;
-  var eff=n*(1+compBonus("dmg")/100);b.dmg=Math.max(0,b.dmg+eff);track("dmg",eff);
+function hitBoss(n,raw){
+  var b=S.boss;if(!b||!n)return 0;
+  if(n>0&&b.won)return 0;
+  var eff=raw?n:n*(1+compBonus("dmg")/100);
+  if(n>0&&rcTop())rcTop().dmg+=eff;
+  track("dmg",eff,true);
+  if(b.won){
+    var tot=b.hp+(b.over||0)+eff;
+    if(tot>=b.hp||!b.rc){b.over=Math.max(0,tot-b.hp);return eff}
+    b.won=false;b.over=0;b.dmg=Math.max(0,tot);
+    var RB=b.rc;b.rc=null;undoRc(RB);
+    note("Boss ranimé","Après ta correction, les dégâts ne suffisent plus : "+b.name+" se relève et les récompenses de sa défaite sont reprises.","red");
+    return eff;
+  }
+  b.dmg=Math.max(0,b.dmg+eff);
   if(b.dmg>=b.hp){
-    b.dmg=b.hp;b.won=true;S.bossWins++;S.points+=2;addToken();
+    b.over=b.dmg-b.hp;b.dmg=b.hp;b.won=true;rcOpen();rcCnt("bossWins",1);addPts(2);addToken();
     var xp=150+S.level*5,gd=addGold(150);
     say(b.name+" est vaincu.",true);
     note("Boss vaincu",b.name+" est tombé. Tu gagnes "+xp+" XP, "+gd+" or, 2 points de caractéristique et 1 jeton de repos.","gold");
     if(COMP[b.name]){
       var lv=S.comp[b.name]||0;
-      if(lv<3){S.comp[b.name]=lv+1;var c=COMP[b.name];
+      if(lv<3){S.comp[b.name]=lv+1;if(rcTop())rcTop().comp.push(b.name);var c=COMP[b.name];
         note(lv?"Compagnon renforcé":"Nouveau compagnon",lv?b.name+" passe au niveau "+(lv+1)+". Son bonus monte à +"+(c.v*(lv+1))+" % sur "+c.d+".":b.name+" rejoint tes rangs. Bonus permanent : +"+c.v+" % sur "+c.d+".","gold")}
     }
     chest(1,"Butin de "+b.name);
     gainXP(xp);
+    b.rc=rcClose();
   }
+  return eff;
 }
 function dayObj(){ensureToday();return S.days[today()]}
 function countDone(){var n=0;for(var k in S.days){if(S.days[k].done)n++}return n}
@@ -781,6 +820,7 @@ function xpFor(ex){if(EX[ex].rec)return 15;return Math.round(25*(1+S.stats[EX[ex
 function gainXP(n){
   if(S.boost===today())n*=2;
   n=Math.round(n);
+  var rt=rcTop();if(rt)rt.xp+=n;
   var r0=rankIdx(S.level),ups=0;
   S.xp+=n;S.totalXp+=n;
   var wk=weekKey(today());S.xpLog[wk]=(S.xpLog[wk]||0)+n;
@@ -798,43 +838,137 @@ function checkAch(){
     if(S.ach.indexOf(a.id)===-1&&a.t()){S.ach.push(a.id);note("Titre obtenu","« "+a.n+" » : "+a.d+".","gold")}
   });
 }
+/* ===== Reçus de récompense : tout ce qui est gagné est noté pour pouvoir être repris ===== */
+var RCS=[];
+function rcOpen(){var r={xp:0,wk:weekKey(today()),gold:0,pts:0,tok:0,dmg:0,items:[],skins:[],titles:[],comp:[],cnt:{},trk:{}};RCS.push(r);return r}
+function rcTop(){return RCS.length?RCS[RCS.length-1]:null}
+function rcClose(){
+  var r=RCS.pop();if(!r)return null;
+  for(var k in r){var v=r[k];if(v===0||v===false||v==null||(v.length===0&&typeof v!=="string")||(typeof v==="object"&&!v.length&&!Object.keys(v).length))delete r[k]}
+  return r;
+}
+function rcCnt(f,n){S[f]=(S[f]||0)+n;var r=rcTop();if(r)r.cnt[f]=(r.cnt[f]||0)+n}
+function addPts(n){S.points+=n;var r=rcTop();if(r)r.pts+=n}
+function stripRc(o){if(!o)return;delete o.rc;delete o.rcd;delete o.bd;if(o.pen)stripRc(o.pen);if(o.sec)stripRc(o.sec)}
+var undone={xp:0,gold:0};
+function loseXP(n,wk){
+  if(!n)return;
+  S.totalXp=Math.max(0,S.totalXp-n);
+  if(wk&&S.xpLog[wk]!=null)S.xpLog[wk]=Math.max(0,S.xpLog[wk]-n);
+  seasonLose(n);
+  var per=3+skillE("lvlPts"),lv0=S.level;
+  S.xp-=n;
+  while(S.xp<0&&S.level>1){S.level--;S.xp+=need(S.level);S.points-=per}
+  if(S.xp<0)S.xp=0;
+  if(S.level<lv0)note("Niveau corrigé","Ta correction te ramène au niveau "+S.level+". Les points de caractéristique de ce niveau sont repris.","red",S.level);
+}
+function fixPts(){
+  while(S.points<0){
+    var best=null;["FOR","AGI","END","VIT"].forEach(function(k){if(S.stats[k]>10&&(!best||S.stats[k]>S.stats[best]))best=k});
+    if(!best){S.points=0;break}
+    S.stats[best]--;S.points++;
+  }
+}
+function undoRc(R){
+  if(!R)return;
+  if(R.dmg)hitBoss(-R.dmg,true);
+  if(R.xp){loseXP(R.xp,R.wk);undone.xp+=R.xp}
+  var trk=R.trk||{};for(var m in trk)track(m,-trk[m]);
+  if(R.gold){S.gold=Math.max(0,S.gold-R.gold);S.goldTotal=Math.max(0,S.goldTotal-R.gold);undone.gold+=R.gold}
+  if(R.pts)S.points-=R.pts;
+  if(R.tok)S.tokens=Math.max(0,S.tokens-R.tok);
+  (R.items||[]).forEach(function(id){
+    for(var i=0;i<S.inv.length;i++)if(S.inv[i].id===id){S.inv.splice(i,1);break}
+    for(var sl in S.eq)if(S.eq[sl]===id)delete S.eq[sl];
+  });
+  (R.skins||[]).forEach(function(k){var i=S.skins.indexOf(k);if(i>-1)S.skins.splice(i,1);if(S.skin===k)S.skin="cyan"});
+  (R.titles||[]).forEach(function(t){var i=S.stitles.indexOf(t);if(i>-1)S.stitles.splice(i,1)});
+  (R.comp||[]).forEach(function(n){if(S.comp[n]>1)S.comp[n]--;else delete S.comp[n]});
+  var cnt=R.cnt||{};for(var f in cnt)S[f]=Math.max(0,(S[f]||0)-cnt[f]);
+  if(R.leg)S.hadLeg=false;
+  fixPts();
+}
+var ACH_REVOCABLE=["q1","s3","pen","sec1","boss1","s7","comp3","loot3","week1","rC","s30","rA","boss4","rS"];
+function revokeAch(){
+  S.ach=S.ach.filter(function(id){
+    if(ACH_REVOCABLE.indexOf(id)===-1)return true;
+    var a=ACH.filter(function(x){return x.id===id})[0];
+    return !a||a.t();
+  });
+}
+function undoQuestDone(d){
+  if(!d.done||!d.rcd)return;
+  d.done=false;
+  if(d.sec&&d.sec.done){d.sec.done=false;var RS=d.sec.rcd;d.sec.rcd=null;undoRc(RS)}
+  var R=d.rcd;d.rcd=null;undoRc(R);
+  if(R)S.bestStreak=Math.max(R.bs||0,streak());
+}
+function boxReward(kind,box){
+  var allP=Object.keys(box.t).every(function(k){return (box.p[k]||0)>=box.t[k]});
+  if(!allP||box.done)return;
+  box.done=true;rcOpen();
+  if(kind==="pen"){rcCnt("penCleared",1);addGold(10);note("Pénalité levée","Tu as survécu. 40 XP gagnés. Ta quête du jour est maintenant accessible.","");gainXP(40)}
+  else{rcCnt("secDone",1);addPts(1);var gs=addGold(25);note("Quête cachée réussie","60 XP, "+gs+" or et 1 point de caractéristique.","gold");gainXP(60)}
+  box.rcd=rcClose();
+}
+function penLocked(){var d=dayObj();return !!(d.pen&&!d.pen.done)}
 function addProg(kind,ex,delta){
   var d=dayObj(),box=kind==="pen"?d.pen:kind==="sec"?d.sec:d;
-  if(!box)return;
-  var cur=box.p[ex]||0,next=Math.max(0,cur+delta);
-  box.p[ex]=next;
-  hitBoss(dmgOf(ex,next-cur));
+  if(!box||box.t[ex]==null)return;
+  if(kind==="q"&&penLocked()){note("Quête verrouillée","Le Système refuse ta quête du jour tant que la zone de pénalité n'est pas terminée.","red");buzz([60,40,60]);renderMain();return}
+  if(kind==="sec"&&!d.done)return;
+  var cap=box.t[ex]*2,cur=box.p[ex]||0,next=Math.min(cap,Math.max(0,cur+delta));
+  if(next===cur){if(delta>0&&cur>=cap)note("Maximum atteint","Tu ne peux pas enregistrer plus du double de l'objectif ("+fmtU(cap,EX[ex].u)+").","");renderMain();return}
+  box.p[ex]=next;undone={xp:0,gold:0};
+  if(!box.bd)box.bd={};
+  if(box.bd[ex]==null)box.bd[ex]=(S.boss&&S.boss.won)?0:dmgOf(ex,cur)*(1+compBonus("dmg")/100);
+  if(next>cur)box.bd[ex]+=hitBoss(dmgOf(ex,next-cur));
+  else{var rm=cur>0?box.bd[ex]*(cur-next)/cur:0;box.bd[ex]=Math.max(0,box.bd[ex]-rm);hitBoss(-rm,true)}
   if(EX[ex].u==="reps")track("reps",next-cur);
+  if(!box.rc)box.rc={};
+  var fixed=false;
   if(kind==="q"){
-    if(next>=d.t[ex]&&!d.r[ex]){d.r[ex]=true;var gx=xpFor(ex);if(!d.restDay&&Math.random()*100<skillE("crit")){gx*=2;note("Frappe critique","XP doublée sur "+EX[ex].n.toLowerCase()+" : "+gx+" XP.","gold")}gainXP(gx);addGold(d.restDay?5:10);toastTick();}
+    if(next<d.t[ex]&&d.r[ex]&&box.rc[ex]){
+      fixed=true;undoQuestDone(d);
+      delete d.r[ex];var RX=box.rc[ex];delete box.rc[ex];undoRc(RX);
+    }
+    if(next>=d.t[ex]&&!d.r[ex]){d.r[ex]=true;rcOpen();var gx=xpFor(ex);if(!d.restDay&&Math.random()*100<skillE("crit")){gx*=2;note("Frappe critique","XP doublée sur "+EX[ex].n.toLowerCase()+" : "+gx+" XP.","gold")}gainXP(gx);addGold(d.restDay?5:10);box.rc[ex]=rcClose();toastTick();}
     var all=Object.keys(d.t).every(function(k){return d.r[k]});
     if(all&&!d.done&&d.restDay){
-      d.done=true;S.bestStreak=Math.max(S.bestStreak,streak());
+      d.done=true;var RR=rcOpen();RR.bs=S.bestStreak;S.bestStreak=Math.max(S.bestStreak,streak());
       var gr=addGold(15);say("Récupération terminée.");
       note("Récupération terminée","Ton corps te remercie. 30 XP et "+gr+" or.","");gainXP(30);track("quests",1);
+      d.rcd=rcClose();
     }
     if(all&&!d.done){
-      d.done=true;gainXP(80+skillE("questXp"));S.points+=1;var gq=addGold(30);track("quests",1);
+      d.done=true;var RQ=rcOpen();RQ.bs=S.bestStreak;gainXP(80+skillE("questXp"));addPts(1);var gq=addGold(30);track("quests",1);
       S.bestStreak=Math.max(S.bestStreak,streak());
       say("Quête terminée.");
       note("Quête terminée","Récompenses : 80 XP bonus, "+gq+" or et 1 point de caractéristique. Série actuelle : "+streak()+" jour"+(streak()>1?"s":"")+".","");
       hitBoss(50);
       if(streak()%7===0){addToken();note("Jeton de repos",streak()+" jours de suite ! Tu gagnes un jeton de repos. Il protégera ta série automatiquement si tu rates un jour.","gold")}
-      if(rng(hash(today()+"secret"+S.name))()<0.35){
+      if(d.sec){note("Quête cachée","Ta quête cachée réapparaît sous ta quête du jour.","gold")}
+      else if(rng(hash(today()+"secret"+S.name))()<0.35){
         var pool=Object.keys(EX).filter(function(k){return !d.t[k]&&EX[k].u!=="min"&&(!S.cls||EX[k].s===S.cls)});
         if(!pool.length)pool=Object.keys(EX).filter(function(k){return !d.t[k]&&EX[k].u!=="min"});
         var sx=pool[Math.floor(rng(hash(today()+"sx"+S.name))()*pool.length)],se=EX[sx];
         d.sec={t:{},p:{},done:false};d.sec.t[sx]=roundU(Math.min(se.b*diffM()*1.5,se.cap),se.u);
         note("Quête cachée","Une quête secrète vient d'apparaître sous ta quête du jour. Bonus : 60 XP et 1 point.","gold");
       }
+      d.rcd=rcClose();
+      if(d.sec&&!d.sec.done)boxReward("sec",d.sec);
     }
   }else{
-    var allP=Object.keys(box.t).every(function(k){return (box.p[k]||0)>=box.t[k]});
-    if(allP&&!box.done){
-      box.done=true;
-      if(kind==="pen"){S.penCleared++;addGold(10);note("Pénalité levée","Tu as survécu. 40 XP gagnés. Ne manque plus ta quête.","");gainXP(40)}
-      else{S.secDone++;S.points+=1;var gs=addGold(25);note("Quête cachée réussie","60 XP, "+gs+" or et 1 point de caractéristique.","gold");gainXP(60)}
+    if(box.done&&box.rcd&&Object.keys(box.t).some(function(k){return (box.p[k]||0)<box.t[k]})){
+      fixed=true;box.done=false;var RB2=box.rcd;box.rcd=null;undoRc(RB2);
     }
+    boxReward(kind,box);
+  }
+  if(fixed){
+    revokeAch();
+    var parts=[];if(undone.xp)parts.push(undone.xp+" XP");if(undone.gold)parts.push(undone.gold+" or");
+    note("Correction enregistrée","L'objectif n'est plus atteint. Le Système reprend "+(parts.length?parts.join(" et ")+", ainsi que ":"")+"les dégâts au boss et tout ce qui découlait de cette validation.","red");
+    beep(300,.15);buzz(80);
   }
   checkAch();save();refresh();
 }
@@ -1019,19 +1153,21 @@ function viewShop(){
 }
 
 function exRow(kind,ex,target,val,locked){
-  var e=EX[ex],ok=val>=target,pct=Math.min(100,val/target*100);
+  var e=EX[ex],ok=val>=target,pct=Math.min(100,val/target*100),cap=target*2,dis=locked?" disabled":"",full=val>=cap;
   var steps=e.u==="reps"?[1,5,10]:e.u==="min"?[1,5]:[15,30];
   var minus=e.u==="reps"?1:e.u==="min"?1:15;
   var h='<div class="ex"><div class="ex-top"><span class="ex-n">'+e.n+'<button class="q" data-a="tip" data-m="'+esc(e.n)+'" aria-label="Comment faire">?</button>'+(kind==="q"?'<small>'+statName(e.s)+'</small>':'')+'</span>'+
     '<span class="ex-c'+(ok?" ok":"")+'">'+fmtU(val,e.u)+' / '+fmtU(target,e.u)+'</span></div>'+
     '<div class="bar'+(ok?" full":"")+'"><i style="width:'+pct+'%"></i></div><div class="ex-btns">'+
-    '<button class="minus" data-a="add" data-k="'+kind+'" data-e="'+ex+'" data-v="'+(-minus)+'" aria-label="Retirer">−</button>';
+    '<button class="minus" data-a="add" data-k="'+kind+'" data-e="'+ex+'" data-v="'+(-minus)+'" aria-label="Retirer"'+(locked||!val?" disabled":"")+'>−</button>';
   if(e.u==="s"){
     var on=chrono&&chrono.kind===kind&&chrono.ex===ex;
-    h+='<button class="chrono'+(on?" on":"")+'" data-a="chrono" data-k="'+kind+'" data-e="'+ex+'"><span id="'+(on?"chronoLbl":"")+'">'+(on?"Arrêter":"Chrono")+'</span></button>';
+    h+='<button class="chrono'+(on?" on":"")+'" data-a="chrono" data-k="'+kind+'" data-e="'+ex+'"'+(locked||(full&&!on)?" disabled":"")+'><span id="'+(on?"chronoLbl":"")+'">'+(on?"Arrêter":"Chrono")+'</span></button>';
   }
-  steps.forEach(function(s){h+='<button data-a="add" data-k="'+kind+'" data-e="'+ex+'" data-v="'+s+'">+'+(e.u==="reps"?s:fmtU(s,e.u))+'</button>'});
-  return h+'</div></div>';
+  steps.forEach(function(s){h+='<button data-a="add" data-k="'+kind+'" data-e="'+ex+'" data-v="'+s+'"'+(locked||full?" disabled":"")+'>+'+(e.u==="reps"?s:fmtU(s,e.u))+'</button>'});
+  h+='</div>';
+  if(full&&!locked)h+='<p class="ex-max">Maximum atteint : le double de l\'objectif.</p>';
+  return h+'</div>';
 }
 function statName(k){for(var i=0;i<STATS.length;i++)if(STATS[i].k===k)return STATS[i].n;return ""}
 
@@ -1039,20 +1175,22 @@ function viewQuete(){
   var d=dayObj(),h="";
   if(d.pen&&!d.pen.done){
     h+='<section class="win danger"><div class="win-h"><span class="sig">!</span>Zone de pénalité</div>'+
-      '<p class="flavor">La quête d\'hier n\'a pas été terminée. Survis à cette épreuve pour lever la pénalité.</p>';
+      '<p class="flavor">La quête d\'hier n\'a pas été terminée. Survis à cette épreuve pour lever la pénalité : ta quête du jour reste verrouillée tant qu\'elle n\'est pas terminée.</p>';
     Object.keys(d.pen.t).forEach(function(ex){h+=exRow("pen",ex,d.pen.t[ex],d.pen.p[ex]||0)});
     h+='<p class="reward">Récompense : 40 XP.</p></section>';
   }
   if(d.restDay)h+='<section class="win gold"><div class="win-h"><span class="sig">☾</span>Jour de repos</div>'+
     '<p class="flavor">Récupération active. Tes muscles se reconstruisent aujourd\'hui, ta série continue même sans rien faire.</p>';
-  else h+='<section class="win"><div class="win-h"><span class="sig">!</span>Quête journalière</div>'+
+  else h+='<section class="win'+(penLocked()?" locked":"")+'"><div class="win-h"><span class="sig">!</span>Quête journalière</div>'+
     '<p class="flavor">'+FLAVOR[d.f||0]+'</p>';
-  Object.keys(d.t).forEach(function(ex){h+=exRow("q",ex,d.t[ex],d.p[ex]||0)});
+  var lk=penLocked();
+  if(lk)h+='<p class="lock-note"><span class="sig">🔒</span>Verrouillée. Termine d\'abord la zone de pénalité pour débloquer ta quête du jour.</p>';
+  Object.keys(d.t).forEach(function(ex){h+=exRow("q",ex,d.t[ex],d.p[ex]||0,lk)});
   if(d.done)h+='<div class="cleared"><span class="sig" style="color:var(--gold)">✓</span>'+(d.restDay?"Récupération terminée. Profite de ta journée.":"Quête terminée. Reviens demain.")+'</div>';
   else if(d.restDay)h+='<p class="reward">Facultatif. Récompense : 15 XP par exercice, puis 30 XP et 15 or.</p>';
   else h+='<p class="reward">Récompense : environ 25 XP par exercice atteint, puis 80 XP et 1 point de caractéristique quand tout est terminé.</p>';
   h+='<p class="reward">Nouvelle quête dans <span class="clock" id="clock"></span></p></section>';
-  if(d.sec){
+  if(d.sec&&d.done){
     h+='<section class="win gold"><div class="win-h"><span class="sig">✦</span>Quête cachée</div>';
     if(d.sec.done)h+='<div class="cleared">✓ Quête cachée réussie.</div>';
     else{h+='<p class="flavor">Le Système a remarqué ta détermination. Relève ce défi supplémentaire avant minuit.</p>';
@@ -1280,6 +1418,7 @@ function viewSettings(){
 /* ===== Chrono de gainage ===== */
 var chrono=null;
 function toggleChrono(kind,ex){
+  if(!chrono&&kind==="q"&&penLocked()){addProg(kind,ex,0);return}
   if(chrono){
     var sec=Math.round((Date.now()-chrono.start)/1000),c=chrono;chrono=null;
     if(sec>0)addProg(c.kind,c.ex,sec);else renderMain();
