@@ -432,7 +432,7 @@ var CLASSES = {
   VIT:{n:"Rôdeur",d:"Des jambes infatigables. Squats, fentes et course à l'honneur."}
 };
 var TRIAL = {id:"trial",r:1,n:"Épreuve de classe",rounds:8,work:40,rest:20,moves:["Pompes","Burpees","Gainage","Squats sautés"],xp:200};
-var APP_VERSION = "8";
+var APP_VERSION = "9";
 var RAR = [{n:"Commun",c:"#9AA8C7",v:2,sell:10},{n:"Rare",c:"#4DA3FF",v:4,sell:30},{n:"Épique",c:"#B07CFF",v:7,sell:80},{n:"Légendaire",c:"#FFC53D",v:12,sell:200}];
 var SLOTS = {tete:{n:"Tête",b:["Bandeau","Casque","Capuche"]},mains:{n:"Mains",b:["Gants","Bandes","Brassards"]},pieds:{n:"Pieds",b:["Bottes","Chaussures","Jambières"]},cou:{n:"Cou",b:["Amulette","Anneau","Pendentif"]}};
 var BON = {FOR:{s:"du titan",d:"d'XP de Force"},AGI:{s:"du vent",d:"d'XP d'Agilité"},END:{s:"de pierre",d:"d'XP d'Endurance"},VIT:{s:"de la source",d:"d'XP de Vitalité"},dg:{s:"du chasseur",d:"d'XP en donjon"},gold:{s:"du marchand",d:"d'or gagné"},dmg:{s:"du bourreau",d:"de dégâts aux boss"}};
@@ -849,7 +849,7 @@ function rcClose(){
 }
 function rcCnt(f,n){S[f]=(S[f]||0)+n;var r=rcTop();if(r)r.cnt[f]=(r.cnt[f]||0)+n}
 function addPts(n){S.points+=n;var r=rcTop();if(r)r.pts+=n}
-function stripRc(o){if(!o)return;delete o.rc;delete o.rcd;delete o.bd;if(o.pen)stripRc(o.pen);if(o.sec)stripRc(o.sec)}
+function stripRc(o){if(!o)return;delete o.rc;delete o.rcd;delete o.bd;delete o.lrc;delete o.lrcAll;if(o.pen)stripRc(o.pen);if(o.sec)stripRc(o.sec)}
 var undone={xp:0,gold:0};
 function loseXP(n,wk){
   if(!n)return;
@@ -886,6 +886,7 @@ function undoRc(R){
   (R.comp||[]).forEach(function(n){if(S.comp[n]>1)S.comp[n]--;else delete S.comp[n]});
   var cnt=R.cnt||{};for(var f in cnt)S[f]=Math.max(0,(S[f]||0)-cnt[f]);
   if(R.leg)S.hadLeg=false;
+  if(R.vit)S.stats.VIT=Math.max(1,S.stats.VIT-R.vit);
   fixPts();
 }
 var ACH_REVOCABLE=["q1","s3","pen","sec1","boss1","s7","comp3","loot3","week1","rC","s30","rA","boss4","rS"];
@@ -933,6 +934,43 @@ function legacyDone(d){
 function legacyBox(kind){
   if(kind==="pen")return estRc(40,10,{cnt:{penCleared:1}});
   return estRc(60,25,{pts:1,cnt:{secDone:1}});
+}
+function toggleLife(k){
+  var dl=dayObj();dl.life=dl.life||{};dl.lrc=dl.lrc||{};
+  var allBefore=LIFE.every(function(l){return dl.life[l.k]});
+  if(dl.life[k]){
+    undone={xp:0,gold:0};
+    if(allBefore){var RA=dl.lrcAll||{cnt:{lifeDays:1},vit:S.lifeDays>0&&S.lifeDays%7===0?1:0};dl.lrcAll=null;undoRc(RA)}
+    var R=dl.lrc[k]||(function(){var r=estRc(10,10);r.trk.life=1;return r})();
+    delete dl.life[k];delete dl.lrc[k];undoRc(R);
+    beep(300,.1);buzz(40);
+  }else{
+    dl.life[k]=true;rcOpen();addGold(10);gainXP(10);track("life",1);dl.lrc[k]=rcClose();toastTick();
+    if(LIFE.every(function(l){return dl.life[l.k]})){
+      var RL=rcOpen();rcCnt("lifeDays",1);
+      if(S.lifeDays%7===0){S.stats.VIT++;RL.vit=1;note("Hygiène de champion","7 journées parfaites. Ta Vitalité gagne 1 point.","gold")}
+      dl.lrcAll=rcClose();
+    }
+  }
+  checkAch();save();refresh();
+}
+/* Remet la journée en ordre si une validation ne correspond plus à la progression (cas laissé par une ancienne version) */
+function reconcileToday(){
+  if(!S||!S.name)return;
+  var d=dayObj(),fixed=false;undone={xp:0,gold:0};
+  if(!d.rc)d.rc={};
+  Object.keys(d.t).forEach(function(ex){
+    if(d.r[ex]&&(d.p[ex]||0)<d.t[ex]){fixed=true;undoQuestDone(d);var R=d.rc[ex]||legacyEx(d,ex);delete d.r[ex];delete d.rc[ex];undoRc(R)}
+  });
+  if(d.done&&!Object.keys(d.t).every(function(k){return d.r[k]})){fixed=true;undoQuestDone(d)}
+  [["pen",d.pen],["sec",d.sec]].forEach(function(x){var box=x[1];
+    if(box&&box.done&&Object.keys(box.t).some(function(k){return (box.p[k]||0)<box.t[k]})){fixed=true;var R=box.rcd||legacyBox(x[0]);box.done=false;box.rcd=null;undoRc(R)}
+  });
+  if(fixed){
+    revokeAch();
+    note("Correction appliquée","Une validation ne correspondait plus à ta progression. Le Système a repris "+undone.xp+" XP, "+undone.gold+" or et tout ce qui en découlait. Ton compteur d'exercices est à jour.","red");
+    save();
+  }
 }
 function penLocked(){var d=dayObj();return !!(d.pen&&!d.pen.done)}
 function addProg(kind,ex,delta){
@@ -1221,9 +1259,9 @@ function viewQuete(){
       h+='<p class="reward">Récompense : 60 XP et 1 point de caractéristique.</p>'}
     h+='</section>';
   }
-  h+='<section class="win"><div class="win-h"><span class="sig">❋</span>Quêtes secondaires</div><p class="flavor">Hygiène de champion. Chaque case validée rapporte 10 XP et 10 or. Réussis les 4 pendant 7 jours pour gagner 1 point de Vitalité.</p>';
+  h+='<section class="win"><div class="win-h"><span class="sig">❋</span>Quêtes secondaires</div><p class="flavor">Hygiène de champion. Chaque case validée rapporte 10 XP et 10 or. Réussis les 4 pendant 7 jours pour gagner 1 point de Vitalité. Touche une case cochée pour la décocher en cas d\'erreur.</p>';
   var life=d.life||{};
-  LIFE.forEach(function(l){h+='<button class="life'+(life[l.k]?" on":"")+'" data-a="life" data-k="'+l.k+'"'+(life[l.k]?" disabled":"")+'><span class="bx">'+(life[l.k]?"✓":"")+'</span><span><b>'+l.n+'</b><small>'+l.d+'</small></span></button>'});
+  LIFE.forEach(function(l){h+='<button class="life'+(life[l.k]?" on":"")+'" data-a="life" data-k="'+l.k+'"><span class="bx">'+(life[l.k]?"✓":"")+'</span><span><b>'+l.n+'</b><small>'+l.d+'</small></span></button>'});
   h+='<p class="reward">Journées complètes : '+(S.lifeDays%7)+' sur 7 avant le prochain point.</p></section>';
   var wq=S.wq;
   h+='<section class="win"><div class="win-h"><span class="sig">▤</span>Quêtes de la semaine</div>';
@@ -1574,9 +1612,7 @@ document.addEventListener("click",function(ev){
   else if(a==="equip"){var it=itemById(b.dataset.i);if(it){S.eq[it.sl]=it.id;beep(1000,.06,.08);save();renderMain()}}
   else if(a==="unequip"){var it2=itemById(b.dataset.i);if(it2&&S.eq[it2.sl]===it2.id){delete S.eq[it2.sl];save();renderMain()}}
   else if(a==="sell"){var it3=itemById(b.dataset.i);if(it3&&S.eq[it3.sl]!==it3.id){S.inv=S.inv.filter(function(x){return x.id!==it3.id});S.gold+=RAR[it3.r].sell;S.goldTotal+=RAR[it3.r].sell;beep(1320,.06,.08);save();refresh()}}
-  else if(a==="life"){var dl=dayObj();dl.life=dl.life||{};var lk=b.dataset.k;if(dl.life[lk])return;dl.life[lk]=true;addGold(10);gainXP(10);track("life",1);toastTick();
-    if(LIFE.every(function(l){return dl.life[l.k]})){S.lifeDays++;if(S.lifeDays%7===0){S.stats.VIT++;note("Hygiène de champion","7 journées parfaites. Ta Vitalité gagne 1 point.","gold")}}
-    checkAch();save();refresh()}
+  else if(a==="life")toggleLife(b.dataset.k)
   else if(a==="exgo"){
     var ek=b.dataset.k,ed=EXAMS.filter(function(x){return x.k===ek})[0];
     if(exT&&exT.k===ek&&exT.mode==="hold"){var secs=Math.floor((Date.now()-exT.start)/1000);exT=null;exVals[ek]=secs;$("#exV_"+ek).value=secs;b.textContent="Recommencer le chrono";beep(990,.3,.14);say("Chrono arrêté. "+secs+" secondes.",true);return}
@@ -1659,7 +1695,7 @@ document.addEventListener("input",function(ev){
 });
 /* ===== Démarrage ===== */
 S=loadLocal();migrate();
-if(S&&S.name){ensureToday();refresh();if(S.trialDone&&!S.cls)showClass()}else{S=null;refresh();showOnb(1)}
+if(S&&S.name){ensureToday();reconcileToday();refresh();if(S.trialDone&&!S.cls)showClass()}else{S=null;refresh();showOnb(1)}
 initCloud();
 if("serviceWorker" in navigator){
   var hadCtrl=!!navigator.serviceWorker.controller,reloaded=false;
