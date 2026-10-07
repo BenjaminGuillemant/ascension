@@ -432,7 +432,7 @@ var CLASSES = {
   VIT:{n:"Rôdeur",d:"Des jambes infatigables. Squats, fentes et course à l'honneur."}
 };
 var TRIAL = {id:"trial",r:1,n:"Épreuve de classe",rounds:8,work:40,rest:20,moves:["Pompes","Burpees","Gainage","Squats sautés"],xp:200};
-var APP_VERSION = "7";
+var APP_VERSION = "8";
 var RAR = [{n:"Commun",c:"#9AA8C7",v:2,sell:10},{n:"Rare",c:"#4DA3FF",v:4,sell:30},{n:"Épique",c:"#B07CFF",v:7,sell:80},{n:"Légendaire",c:"#FFC53D",v:12,sell:200}];
 var SLOTS = {tete:{n:"Tête",b:["Bandeau","Casque","Capuche"]},mains:{n:"Mains",b:["Gants","Bandes","Brassards"]},pieds:{n:"Pieds",b:["Bottes","Chaussures","Jambières"]},cou:{n:"Cou",b:["Amulette","Anneau","Pendentif"]}};
 var BON = {FOR:{s:"du titan",d:"d'XP de Force"},AGI:{s:"du vent",d:"d'XP d'Agilité"},END:{s:"de pierre",d:"d'XP d'Endurance"},VIT:{s:"de la source",d:"d'XP de Vitalité"},dg:{s:"du chasseur",d:"d'XP en donjon"},gold:{s:"du marchand",d:"d'or gagné"},dmg:{s:"du bourreau",d:"de dégâts aux boss"}};
@@ -710,7 +710,7 @@ function seasonLose(n){
   if(!S.season)return;
   S.season.xp=Math.max(0,S.season.xp-n);
   var np=Math.min(30,Math.floor(S.season.xp/PAL_XP));
-  while(S.season.pal>np){var R=S.season.rc&&S.season.rc[S.season.pal];if(R){delete S.season.rc[S.season.pal];undoRc(R)}S.season.pal--}
+  while(S.season.pal>np){var R=S.season.rc&&S.season.rc[S.season.pal];if(!R)break;delete S.season.rc[S.season.pal];undoRc(R);S.season.pal--}
 }
 function seasonBoss(){
   if(!S.season||S.season.pal<20)return null;
@@ -735,8 +735,8 @@ function track(m,n,raw){
   wq.c[m]=Math.max(0,(wq.c[m]||0)+n);
   if(n<0){
     wq.ids.forEach(function(id){
-      if(wq.done[id]&&(wq.c[id]||0)<wq.t[id]){
-        if(wq.chest){wq.chest=false;var RC0=wq.rcC;wq.rcC=null;undoRc(RC0)}
+      if(wq.done[id]&&wq.rc[id]&&(wq.c[id]||0)<wq.t[id]){
+        if(wq.chest&&wq.rcC){wq.chest=false;var RC0=wq.rcC;wq.rcC=null;undoRc(RC0)}
         wq.done[id]=false;var R=wq.rc[id];delete wq.rc[id];undoRc(R);
         note("Quête de la semaine",wqLabel(id)+" : l'objectif n'est plus atteint après ta correction. Les 60 or sont repris.","red");
       }
@@ -897,11 +897,12 @@ function revokeAch(){
   });
 }
 function undoQuestDone(d){
-  if(!d.done||!d.rcd)return;
+  if(!d.done)return;
+  var R=d.rcd||legacyDone(d);
   d.done=false;
-  if(d.sec&&d.sec.done){d.sec.done=false;var RS=d.sec.rcd;d.sec.rcd=null;undoRc(RS)}
-  var R=d.rcd;d.rcd=null;undoRc(R);
-  if(R)S.bestStreak=Math.max(R.bs||0,streak());
+  if(d.sec&&d.sec.done){var RS=d.sec.rcd||legacyBox("sec");d.sec.done=false;d.sec.rcd=null;undoRc(RS)}
+  d.rcd=null;undoRc(R);
+  S.bestStreak=Math.max(R.bs||0,streak());
 }
 function boxReward(kind,box){
   var allP=Object.keys(box.t).every(function(k){return (box.p[k]||0)>=box.t[k]});
@@ -910,6 +911,28 @@ function boxReward(kind,box){
   if(kind==="pen"){rcCnt("penCleared",1);addGold(10);note("Pénalité levée","Tu as survécu. 40 XP gagnés. Ta quête du jour est maintenant accessible.","");gainXP(40)}
   else{rcCnt("secDone",1);addPts(1);var gs=addGold(25);note("Quête cachée réussie","60 XP, "+gs+" or et 1 point de caractéristique.","gold");gainXP(60)}
   box.rcd=rcClose();
+}
+/* Reçu reconstitué pour une validation faite avant l'arrivée des reçus */
+function gb(n){return Math.round(n*(1+compBonus("gold")/100))}
+function xb(n){return Math.round(S.boost===today()?n*2:n)}
+function estRc(xp,gold,o){
+  var r={xp:xb(xp),wk:weekKey(today()),gold:gb(gold),trk:{}};
+  r.trk.xp=r.xp;r.trk.gold=r.gold;
+  for(var k in o)r[k]=o[k];
+  return r;
+}
+function legacyEx(d,ex){return estRc(xpFor(ex),d.restDay?5:10)}
+function legacyDone(d){
+  var st=streak(),bs=S.bestStreak===st?Math.max(0,st-1):S.bestStreak;
+  if(d.restDay){var r0=estRc(30,15,{bs:bs});r0.trk.quests=1;return r0}
+  var r=estRc(80+skillE("questXp"),30,{pts:1,bs:bs,dmg:(S.boss&&!S.boss.won)?50*(1+compBonus("dmg")/100):0});
+  r.trk.quests=1;
+  if(st>0&&st%7===0)r.tok=1;
+  return r;
+}
+function legacyBox(kind){
+  if(kind==="pen")return estRc(40,10,{cnt:{penCleared:1}});
+  return estRc(60,25,{pts:1,cnt:{secDone:1}});
 }
 function penLocked(){var d=dayObj();return !!(d.pen&&!d.pen.done)}
 function addProg(kind,ex,delta){
@@ -928,9 +951,9 @@ function addProg(kind,ex,delta){
   if(!box.rc)box.rc={};
   var fixed=false;
   if(kind==="q"){
-    if(next<d.t[ex]&&d.r[ex]&&box.rc[ex]){
+    if(next<d.t[ex]&&d.r[ex]){
       fixed=true;undoQuestDone(d);
-      delete d.r[ex];var RX=box.rc[ex];delete box.rc[ex];undoRc(RX);
+      var RX=box.rc[ex]||legacyEx(d,ex);delete d.r[ex];delete box.rc[ex];undoRc(RX);
     }
     if(next>=d.t[ex]&&!d.r[ex]){d.r[ex]=true;rcOpen();var gx=xpFor(ex);if(!d.restDay&&Math.random()*100<skillE("crit")){gx*=2;note("Frappe critique","XP doublée sur "+EX[ex].n.toLowerCase()+" : "+gx+" XP.","gold")}gainXP(gx);addGold(d.restDay?5:10);box.rc[ex]=rcClose();toastTick();}
     var all=Object.keys(d.t).every(function(k){return d.r[k]});
@@ -959,8 +982,8 @@ function addProg(kind,ex,delta){
       if(d.sec&&!d.sec.done)boxReward("sec",d.sec);
     }
   }else{
-    if(box.done&&box.rcd&&Object.keys(box.t).some(function(k){return (box.p[k]||0)<box.t[k]})){
-      fixed=true;box.done=false;var RB2=box.rcd;box.rcd=null;undoRc(RB2);
+    if(box.done&&Object.keys(box.t).some(function(k){return (box.p[k]||0)<box.t[k]})){
+      fixed=true;var RB2=box.rcd||legacyBox(kind);box.done=false;box.rcd=null;undoRc(RB2);
     }
     boxReward(kind,box);
   }
@@ -1372,7 +1395,7 @@ function viewJournal(){
 }
 function seasonWin(){
   var se=S.season,m=se.m,n=new Date(),end=new Date(n.getFullYear(),n.getMonth()+1,1),days=Math.ceil((end-n)/86400000);
-  var inPal=se.pal>=30?PAL_XP:se.xp-se.pal*PAL_XP;
+  var inPal=se.pal>=30?PAL_XP:Math.max(0,se.xp-se.pal*PAL_XP);
   var h='<section class="win"><div class="win-h"><span class="sig">✦</span>'+seasonName(m)+'</div>'+
     '<div class="ex-top"><span class="ex-n">Palier '+se.pal+' / 30</span><span class="ex-c">'+days+' jour'+(days>1?"s":"")+' restant'+(days>1?"s":"")+'</span></div>'+
     '<div class="bar'+(se.pal>=30?" full":"")+'"><i style="width:'+(inPal/PAL_XP*100)+'%"></i></div>'+
